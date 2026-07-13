@@ -351,11 +351,29 @@ let currentDates = [];
 let allMatches = [];
 let currentPage = 1;
 let chartDataCache = {};
+let chartRangeCache = {};
 let refreshCountdown = REFRESH_INTERVAL;
 
 // ── layout helpers ──
 
-function getCardLayout() {
+function calcYRange(data) {
+  const allVals = [...data.win, ...data.draw, ...data.loss];
+  const dataMin = Math.min(...allVals);
+  const dataMax = Math.max(...allVals);
+  const low  = Math.max(0,   Math.floor((dataMin - 5) / 5) * 5);
+  const high = Math.min(100, Math.ceil( (dataMax + 5) / 5) * 5);
+  return [low, high];
+}
+
+function mergeYRange(mid, newRange) {
+  const cur = chartRangeCache[mid];
+  if (!cur) { chartRangeCache[mid] = newRange; return newRange; }
+  const merged = [Math.min(cur[0], newRange[0]), Math.max(cur[1], newRange[1])];
+  chartRangeCache[mid] = merged;
+  return merged;
+}
+
+function getCardLayout(yRange) {
   return {
     margin: { t: 8, r: 8, b: 52, l: 36 },
     xaxis: {
@@ -364,7 +382,7 @@ function getCardLayout() {
       gridcolor: '#E8EDF3', linecolor: '#DDE3EC', zerolinecolor: '#E8EDF3',
     },
     yaxis: {
-      range: [0, 100], ticksuffix: "%",
+      range: yRange || [0, 100], ticksuffix: "%",
       tickfont: { size: 9, color: '#6B7A8D' },
       gridcolor: '#E8EDF3', linecolor: '#DDE3EC', zerolinecolor: '#E8EDF3',
     },
@@ -378,7 +396,7 @@ function getCardLayout() {
   };
 }
 
-function getModalLayout() {
+function getModalLayout(yRange) {
   return {
     margin: { t: 16, r: 20, b: 55, l: 48 },
     xaxis: {
@@ -388,7 +406,7 @@ function getModalLayout() {
     },
     yaxis: {
       title: { text: '支持率 (%)', font: { color: '#6B7A8D', size: 12 } },
-      range: [0, 100], ticksuffix: "%", tickfont: { color: '#6B7A8D' },
+      range: yRange || [0, 100], ticksuffix: "%", tickfont: { color: '#6B7A8D' },
       gridcolor: '#E8EDF3', linecolor: '#DDE3EC', zerolinecolor: '#E8EDF3',
     },
     legend: {
@@ -442,6 +460,7 @@ async function selectDate(date) {
   currentDate = date;
   currentPage = 1;
   chartDataCache = {};
+  chartRangeCache = {};
   document.querySelectorAll(".date-btn").forEach(btn =>
     btn.classList.toggle("active", btn.dataset.date === date));
   const res = await fetch(`/api/matches?date=${date}`);
@@ -508,7 +527,8 @@ async function loadAndRenderChart(mid, containerId, isModal) {
       return;
     }
   }
-  const layout = isModal ? getModalLayout() : getCardLayout();
+  const yRange = mergeYRange(mid, calcYRange(data));
+  const layout = isModal ? getModalLayout(yRange) : getCardLayout(yRange);
   Plotly.react(containerId, buildTraces(data), layout, { displayModeBar: isModal, responsive: true });
 }
 
@@ -612,7 +632,8 @@ async function silentRefresh() {
       chartDataCache[m.mid] = data;
       const containerId = `plot-${m.mid}`;
       if (document.getElementById(containerId)) {
-        Plotly.react(containerId, buildTraces(data), getCardLayout(), { responsive: true });
+        const yRange = mergeYRange(m.mid, calcYRange(data));
+        Plotly.react(containerId, buildTraces(data), getCardLayout(yRange), { responsive: true });
       }
     }));
   }
