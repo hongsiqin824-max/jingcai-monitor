@@ -170,6 +170,10 @@
 
     .card-meta {
       padding: 7px 14px 5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       font-family: var(--font-body);
       font-size: 10px;
       letter-spacing: 0.1em;
@@ -178,30 +182,25 @@
       border-bottom: 1px solid var(--border);
     }
 
-    .matchup {
-      padding: 6px 16px 5px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-    }
-
-    .team-name {
-      font-family: var(--font-body);
+    .card-matchup {
+      font-size: 12px;
       font-weight: 700;
-      font-size: 17px;
       color: var(--chalk);
-      letter-spacing: 0.03em;
+      white-space: nowrap;
+      flex-shrink: 0;
+      text-transform: none;
+      letter-spacing: 0.02em;
     }
-
-    .vs-sep {
+    .card-matchup .vs {
       font-family: var(--font-display);
-      font-size: 15px;
+      font-size: 11px;
       color: var(--ash);
-      letter-spacing: 0.12em;
+      margin: 0 3px;
+      font-weight: 400;
+      letter-spacing: 0.1em;
     }
 
-    .plotly-container { width: 100%; height: 267px; }
+    .plotly-container { width: 100%; height: 295px; }
 
     /* ── no data ── */
     .no-data {
@@ -387,7 +386,7 @@ function getCardLayout(yRange) {
       gridcolor: '#E8EDF3', linecolor: '#DDE3EC', zerolinecolor: '#E8EDF3',
     },
     legend: {
-      orientation: "h", y: 1.18, x: 0.5, xanchor: "center",
+      orientation: "h", y: 1.18, x: 0.99, xanchor: "right",
       font: { size: 10, color: '#6B7A8D' }, bgcolor: 'rgba(0,0,0,0)',
     },
     hovermode: "x unified",
@@ -499,11 +498,9 @@ async function renderPage(page) {
     card.className = "chart-card";
     card.id = `card-${m.mid}`;
     card.innerHTML = `
-      <div class="card-meta">${m["比赛编号"]} &middot; ${m["联赛"]} &middot; ${m["比赛日期"]}</div>
-      <div class="matchup">
-        <span class="team-name">${m["主队"]}</span>
-        <span class="vs-sep">VS</span>
-        <span class="team-name">${m["客队"]}</span>
+      <div class="card-meta">
+        <span>${m["比赛编号"]} &middot; ${m["联赛"]} &middot; ${m["比赛日期"]}</span>
+        <span class="card-matchup">${m["主队"]} <span class="vs">VS</span> ${m["客队"]}</span>
       </div>
       <div class="plotly-container" id="plot-${m.mid}"></div>
     `;

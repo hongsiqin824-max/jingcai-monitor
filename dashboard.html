@@ -225,6 +225,7 @@ let currentDates = [];         // 当前已渲染的日期列表，用于差量�
 let allMatches = [];           // 当前日期所有比赛元信息
 let currentPage = 1;           // 当前页码
 let chartDataCache = {};       // 图表数据缓存 { mid: {times, win, draw, loss} }
+let chartRangeCache = {};      // Y轴范围缓存 { mid: [low, high] }
 let refreshTimer = null;       // 倒计时 timer
 let refreshCountdown = REFRESH_INTERVAL;
 
@@ -267,6 +268,7 @@ async function selectDate(date) {
   currentDate = date;
   currentPage = 1;
   chartDataCache = {};
+  chartRangeCache = {};
 
   // 更新按钮高亮
   document.querySelectorAll(".date-btn").forEach(btn => {
@@ -351,7 +353,8 @@ async function loadAndRenderChart(mid, containerId, isModal) {
     }
   }
 
-  const layout = isModal ? getModalLayout() : getCardLayout();
+  const yRange = mergeYRange(mid, calcYRange(data));
+  const layout = isModal ? getModalLayout(yRange) : getCardLayout(yRange);
   const traces = buildTraces(data);
   Plotly.react(containerId, traces, layout, { displayModeBar: isModal, responsive: true });
 }
@@ -385,12 +388,30 @@ function buildTraces(data) {
   ];
 }
 
+function calcYRange(data) {
+  const allVals = [...data.win, ...data.draw, ...data.loss];
+  if (!allVals.length) return [0, 100];
+  const dataMin = Math.min(...allVals);
+  const dataMax = Math.max(...allVals);
+  const low  = Math.max(0,   Math.floor((dataMin - 5) / 5) * 5);
+  const high = Math.min(100, Math.ceil( (dataMax + 5) / 5) * 5);
+  return [low, high];
+}
+
+function mergeYRange(mid, newRange) {
+  const cur = chartRangeCache[mid];
+  if (!cur) { chartRangeCache[mid] = newRange; return newRange; }
+  const merged = [Math.min(cur[0], newRange[0]), Math.max(cur[1], newRange[1])];
+  chartRangeCache[mid] = merged;
+  return merged;
+}
+
 // 小卡片布局
-function getCardLayout() {
+function getCardLayout(yRange) {
   return {
     margin: { t: 10, r: 10, b: 65, l: 40 },
     xaxis: { tickangle: -30, tickfont: { size: 10 } },
-    yaxis: { range: [0, 100], ticksuffix: "%", tickfont: { size: 10 } },
+    yaxis: { range: yRange || [0, 100], ticksuffix: "%", tickfont: { size: 10 } },
     legend: { orientation: "h", y: 1.12, x: 0.5, xanchor: "center", font: { size: 11 } },
     hovermode: "x unified",
     plot_bgcolor: "#f9f9f9",
@@ -399,11 +420,11 @@ function getCardLayout() {
 }
 
 // 放大弹窗布局
-function getModalLayout() {
+function getModalLayout(yRange) {
   return {
     margin: { t: 20, r: 20, b: 60, l: 50 },
     xaxis: { title: "采集时间", tickangle: -30 },
-    yaxis: { title: "支持率 (%)", range: [0, 100], ticksuffix: "%" },
+    yaxis: { title: "支持率 (%)", range: yRange || [0, 100], ticksuffix: "%" },
     legend: { orientation: "h", y: 1.05, x: 0.5, xanchor: "center" },
     hovermode: "x unified",
     plot_bgcolor: "#f9f9f9",
@@ -537,7 +558,8 @@ async function silentRefresh() {
       chartDataCache[m.mid] = data;
       const containerId = `plot-${m.mid}`;
       if (document.getElementById(containerId)) {
-        Plotly.react(containerId, buildTraces(data), getCardLayout(), { responsive: true });
+        const yRange = mergeYRange(m.mid, calcYRange(data));
+        Plotly.react(containerId, buildTraces(data), getCardLayout(yRange), { responsive: true });
       }
     }));
   }
