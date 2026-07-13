@@ -87,7 +87,7 @@ def read_chart_data(mid):
     if not os.path.exists(csv_path):
         return None
 
-    times, win_pcts, draw_pcts, loss_pcts = [], [], [], []
+    times, win_pcts, draw_pcts, loss_pcts, total_votes = [], [], [], [], []
 
     try:
         with open(csv_path, "r", encoding="utf-8-sig") as f:
@@ -97,6 +97,10 @@ def read_chart_data(mid):
                 win_pcts.append(int(row["胜_支持率"]))
                 draw_pcts.append(int(row["平_支持率"]))
                 loss_pcts.append(int(row["负_支持率"]))
+                win_v  = int(row.get("胜_投票数", 0) or 0)
+                draw_v = int(row.get("平_投票数", 0) or 0)
+                loss_v = int(row.get("负_投票数", 0) or 0)
+                total_votes.append(win_v + draw_v + loss_v)
     except Exception:
         return None
 
@@ -106,6 +110,7 @@ def read_chart_data(mid):
         "win": win_pcts,
         "draw": draw_pcts,
         "loss": loss_pcts,
+        "total_votes": total_votes,
     }
 
 
@@ -129,6 +134,11 @@ def index():
 @app.route("/v2")
 def index_v2():
     return send_from_directory(".", "dashboard_v2.html")
+
+
+@app.route("/v3")
+def index_v3():
+    return send_from_directory(".", "dashboard_v3.html")
 
 
 @app.route("/api/dates")
