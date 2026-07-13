@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>竞彩支持率 · LIVE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #07080f;
+      --surface: #0f1320;
+      --raised:  #1c2333;
+      --border:  #252e42;
+      --amber:   #f0b429;
+      --win:     #e05c5c;
+      --draw:    #f0b429;
+      --loss:    #5b8dee;
+      --text:    #d4dce8;
+      --muted:   #6b7a8f;
+      --font-display: 'Barlow Condensed', sans-serif;
+      --font-body:    'Inter', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* header */
+    .header {
+      padding: 18px 32px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+    }
+
+    .header h1 {
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #fff;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      color: var(--amber);
+      text-transform: uppercase;
+    }
+
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--amber);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.3; transform: scale(0.7); }
+    }
+
+    .refresh-info {
+      font-size: 12px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* date bar */
+    .date-bar {
+      padding: 14px 32px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+
+    .date-bar label {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      white-space: nowrap;
+      margin-right: 4px;
+    }
+
+    .date-btn {
+      padding: 5px 16px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: transparent;
+      font-size: 13px;
+      font-family: var(--font-display);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      color: var(--muted);
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+
+    .date-btn:hover       { color: var(--text); border-color: var(--text); }
+    .date-btn.active      { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 700; }
+
+    /* main */
+    .main { padding: 24px 32px; }
+
+    .stats {
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+    }
+
+    .stats b { color: var(--amber); font-variant-numeric: tabular-nums; }
+
+    /* grid */
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    /* card */
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .chart-card:hover {
+      border-color: var(--amber);
+      box-shadow: 0 0 0 1px var(--amber), 0 8px 32px rgba(0,0,0,0.4);
+    }
+
+    /* support strip — signature element:
+       three proportional segments whose widths = current win/draw/loss %.
+       Encodes the current support ratio as structure, not decoration. */
+    .support-strip {
+      display: flex;
+      height: 52px;
+      overflow: hidden;
+    }
+
+    .strip-seg {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+      transition: flex 0.6s ease;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .strip-seg.seg-win  { background: rgba(224,92,92,0.15);  border-bottom: 2px solid var(--win); }
+    .strip-seg.seg-draw { background: rgba(240,180,41,0.10); border-bottom: 2px solid var(--draw); }
+    .strip-seg.seg-loss { background: rgba(91,141,238,0.13); border-bottom: 2px solid var(--loss); }
+
+    .strip-pct {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .seg-win  .strip-pct { color: var(--win); }
+    .seg-draw .strip-pct { color: var(--draw); }
+    .seg-loss .strip-pct { color: var(--loss); }
+
+    .strip-label {
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .card-title {
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border-bottom: 1px solid var(--border);
+      letter-spacing: 0.03em;
+    }
+
+    .plotly-container { width: 100%; height: 220px; }
+
+    /* no data */
+    .no-data {
+      grid-column: span 2;
+      text-align: center;
+      color: var(--muted);
+      padding: 80px 0;
+      font-size: 13px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    /* pagination */
+    .pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      margin-top: 28px;
+    }
+
+    .page-btn {
+      width: 34px; height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: transparent;
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--muted);
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .page-btn:hover:not(:disabled) { color: var(--text); border-color: var(--text); }
+    .page-btn.active               { background: var(--amber); color: var(--bg); border-color: var(--amber); }
+    .page-btn:disabled             { opacity: 0.25; cursor: not-allowed; }
+
+    /* modal */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 1000;
+      justify-content: center; align-items: center;
+      backdrop-filter: blur(4px);
+    }
+    .modal-overlay.show { display: flex; }
+
+    .modal-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      width: 92vw; max-width: 1100px;
+      padding: 18px;
+      position: relative;
+    }
+
+    .modal-title {
+      font-family: var(--font-display);
+      font-size: 16px; font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--text);
+      margin-bottom: 10px;
+      padding-right: 36px;
+      text-transform: uppercase;
+    }
+
+    .modal-close {
+      position: absolute; top: 16px; right: 18px;
+      font-size: 20px; cursor: pointer;
+      color: var(--muted); line-height: 1;
+      transition: color 0.15s;
+    }
+    .modal-close:hover { color: var(--text); }
+
+    #modal-chart { width: 100%; height: 500px; }
+
+    /* refresh bar */
+    .refresh-bar {
+      height: 2px;
+      background: var(--amber);
+      position: fixed; bottom: 0; left: 0;
+      transition: width linear;
+      z-index: 999;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <h1>竞彩足球 · 支持率监控</h1>
+    <span class="live-badge"><span class="live-dot"></span>Live</span>
+  </div>
+  <div class="refresh-info" id="refresh-info">每5分钟自动更新</div>
+</div>
+
+<div class="date-bar">
+  <label>日期</label>
+  <div id="date-btns" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+</div>
+
+<div class="main">
+  <div class="stats" id="stats"></div>
+  <div class="chart-grid" id="chart-grid"></div>
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-title"></div>
+    <span class="modal-close" id="modal-close">&#x2715;</span>
+    <div id="modal-chart"></div>
+  </div>
+</div>
+
+<div class="refresh-bar" id="refresh-bar" style="width:0%"></div>
+
+<script>
+const PAGE_SIZE = 4;
+const REFRESH_INTERVAL = 300;
+
+let currentDate = "";
+let currentDates = [];
+let allMatches = [];
+let currentPage = 1;
+let chartDataCache = {};
+let refreshCountdown = REFRESH_INTERVAL;
+
+function getCardLayout() {
+  return {
+    margin: { t: 8, r: 10, b: 60, l: 42 },
+    xaxis: {
+      tickangle: -30,
+      tickfont: { size: 9, color: '#6b7a8f' },
+      gridcolor: '#1c2333', linecolor: '#252e42', zerolinecolor: '#1c2333',
+    },
+    yaxis: {
+      range: [0, 100], ticksuffix: "%",
+      tickfont: { size: 9, color: '#6b7a8f' },
+      gridcolor: '#1c2333', linecolor: '#252e42', zerolinecolor: '#1c2333',
+    },
+    legend: {
+      orientation: "h", y: 1.18, x: 0.5, xanchor: "center",
+      font: { size: 10, color: '#8895a7' }, bgcolor: 'rgba(0,0,0,0)',
+    },
+    hovermode: "x unified",
+    plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
+    hoverlabel: { bgcolor: '#1c2333', bordercolor: '#252e42', font: { color: '#d4dce8', size: 12 } },
+  };
+}
+
+function getModalLayout() {
+  return {
+    margin: { t: 20, r: 20, b: 55, l: 52 },
+    xaxis: {
+      title: { text: '采集时间', font: { color: '#6b7a8f', size: 12 } },
+      tickangle: -30, tickfont: { color: '#6b7a8f' },
+      gridcolor: '#1c2333', linecolor: '#252e42', zerolinecolor: '#1c2333',
+    },
+    yaxis: {
+      title: { text: '支持率 (%)', font: { color: '#6b7a8f', size: 12 } },
+      range: [0, 100], ticksuffix: "%", tickfont: { color: '#6b7a8f' },
+      gridcolor: '#1c2333', linecolor: '#252e42', zerolinecolor: '#1c2333',
+    },
+    legend: {
+      orientation: "h", y: 1.06, x: 0.5, xanchor: "center",
+      font: { color: '#8895a7', size: 12 }, bgcolor: 'rgba(0,0,0,0)',
+    },
+    hovermode: "x unified",
+    plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
+    hoverlabel: { bgcolor: '#1c2333', bordercolor: '#252e42', font: { color: '#d4dce8', size: 13 } },
+  };
+}
+
+function buildTraces(data) {
+  return [
+    { x: data.times, y: data.win,  mode: "lines+markers", name: "胜", line: { color: "#e05c5c", width: 2 }, marker: { size: 4 } },
+    { x: data.times, y: data.draw, mode: "lines+markers", name: "平", line: { color: "#f0b429", width: 2 }, marker: { size: 4 } },
+    { x: data.times, y: data.loss, mode: "lines+markers", name: "负", line: { color: "#5b8dee", width: 2 }, marker: { size: 4 } },
+  ];
+}
+
+function updateSupportStrip(mid, data) {
+  if (!data || !data.win || data.win.length === 0) return;
+  const last = data.win.length - 1;
+  const w = data.win[last], d = data.draw[last], l = data.loss[last];
+  const card = document.getElementById(`card-${mid}`);
+  if (!card) return;
+  const winSeg  = card.querySelector('.seg-win');
+  const drawSeg = card.querySelector('.seg-draw');
+  const lossSeg = card.querySelector('.seg-loss');
+  if (winSeg)  { winSeg.style.flex  = w; winSeg.querySelector('.strip-pct').textContent  = w; }
+  if (drawSeg) { drawSeg.style.flex = d; drawSeg.querySelector('.strip-pct').textContent = d; }
+  if (lossSeg) { lossSeg.style.flex = l; lossSeg.querySelector('.strip-pct').textContent = l; }
+}
+
+async function init() {
+  const res = await fetch("/api/dates");
+  const data = await res.json();
+  renderDateBtns(data.dates, data.today);
+  const defaultDate = data.dates.includes(data.today) ? data.today : data.dates[data.dates.length - 1];
+  selectDate(defaultDate);
+  startRefreshTimer();
+}
+
+function renderDateBtns(dates, today) {
+  const container = document.getElementById("date-btns");
+  container.innerHTML = "";
+  currentDates = dates;
+  dates.forEach(d => {
+    const btn = document.createElement("button");
+    btn.className = "date-btn";
+    btn.textContent = d === today ? d + " 今日" : d;
+    btn.dataset.date = d;
+    btn.onclick = () => selectDate(d);
+    container.appendChild(btn);
+  });
+}
+
+async function selectDate(date) {
+  currentDate = date;
+  currentPage = 1;
+  chartDataCache = {};
+  document.querySelectorAll(".date-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.date === date);
+  });
+  const res = await fetch(`/api/matches?date=${date}`);
+  const data = await res.json();
+  allMatches = data.matches;
+  updateStats();
+  renderPage(currentPage);
+}
+
+function updateStats() {
+  const total = allMatches.length;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  document.getElementById("stats").innerHTML = total > 0
+    ? `<b>${total}</b> 场比赛 &nbsp;·&nbsp; 第 <b>${currentPage}</b> / <b>${totalPages}</b> 页`
+    : "";
+}
+
+async function renderPage(page) {
+  currentPage = page;
+  const grid = document.getElementById("chart-grid");
+  grid.innerHTML = "";
+  const start = (page - 1) * PAGE_SIZE;
+  const pageMatches = allMatches.slice(start, start + PAGE_SIZE);
+  updateStats();
+  renderPagination();
+
+  if (pageMatches.length === 0) {
+    grid.innerHTML = '<div class="no-data">该日期暂无比赛数据</div>';
+    return;
+  }
+
+  pageMatches.forEach(m => {
+    const card = document.createElement("div");
+    card.className = "chart-card";
+    card.id = `card-${m.mid}`;
+    card.innerHTML = `
+      <div class="support-strip">
+        <div class="strip-seg seg-win"  style="flex:34"><span class="strip-pct">--</span><span class="strip-label">胜</span></div>
+        <div class="strip-seg seg-draw" style="flex:33"><span class="strip-pct">--</span><span class="strip-label">平</span></div>
+        <div class="strip-seg seg-loss" style="flex:33"><span class="strip-pct">--</span><span class="strip-label">负</span></div>
+      </div>
+      <div class="card-title" title="${m.title}">${m.title}</div>
+      <div class="plotly-container" id="plot-${m.mid}"></div>
+    `;
+    card.addEventListener("dblclick", () => openModal(m.mid, m.title));
+    grid.appendChild(card);
+  });
+
+  await Promise.all(pageMatches.map(m => loadAndRenderChart(m.mid, `plot-${m.mid}`, false)));
+}
+
+async function loadAndRenderChart(mid, containerId, isModal) {
+  let data = chartDataCache[mid];
+  if (!data) {
+    try {
+      const res = await fetch(`/api/chart/${mid}`);
+      if (!res.ok) { showNoData(containerId); return; }
+      data = await res.json();
+      chartDataCache[mid] = data;
+    } catch (e) {
+      showNoData(containerId);
+      return;
+    }
+  }
+  const layout = isModal ? getModalLayout() : getCardLayout();
+  Plotly.react(containerId, buildTraces(data), layout, { displayModeBar: isModal, responsive: true });
+  if (!isModal) updateSupportStrip(mid, data);
+}
+
+function showNoData(containerId) {
+  const el = document.getElementById(containerId);
+  if (el) el.innerHTML = '<div style="text-align:center;color:#6b7a8f;padding:60px 0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;">暂无数据</div>';
+}
+
+function renderPagination() {
+  const total = allMatches.length;
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const container = document.getElementById("pagination");
+  container.innerHTML = "";
+  if (totalPages <= 1) return;
+  container.appendChild(makePagerBtn("‹", currentPage === 1, () => renderPage(currentPage - 1)));
+  for (let i = 1; i <= totalPages; i++) {
+    const btn = makePagerBtn(i, false, () => renderPage(i));
+    if (i === currentPage) btn.classList.add("active");
+    container.appendChild(btn);
+  }
+  container.appendChild(makePagerBtn("›", currentPage === totalPages, () => renderPage(currentPage + 1)));
+}
+
+function makePagerBtn(text, disabled, onClick) {
+  const btn = document.createElement("button");
+  btn.className = "page-btn";
+  btn.textContent = text;
+  btn.disabled = disabled;
+  if (!disabled) btn.onclick = onClick;
+  return btn;
+}
+
+function openModal(mid, title) {
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-overlay").classList.add("show");
+  chartDataCache[mid] = null;
+  loadAndRenderChart(mid, "modal-chart", true);
+}
+
+document.getElementById("modal-close").onclick = () => {
+  document.getElementById("modal-overlay").classList.remove("show");
+  Plotly.purge("modal-chart");
+};
+document.getElementById("modal-overlay").onclick = (e) => {
+  if (e.target === document.getElementById("modal-overlay")) {
+    document.getElementById("modal-overlay").classList.remove("show");
+    Plotly.purge("modal-chart");
+  }
+};
+
+function startRefreshTimer() {
+  refreshCountdown = REFRESH_INTERVAL;
+  updateRefreshBar();
+  setInterval(async () => {
+    refreshCountdown--;
+    updateRefreshBar();
+    if (refreshCountdown <= 0) {
+      refreshCountdown = REFRESH_INTERVAL;
+      const bar = document.getElementById("refresh-bar");
+      bar.style.transition = "none";
+      bar.style.width = "0%";
+      await silentRefresh();
+    }
+  }, 1000);
+}
+
+async function silentRefresh() {
+  document.getElementById("refresh-info").textContent = "正在更新...";
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageMatches = allMatches.slice(start, start + PAGE_SIZE);
+  const oldMids = pageMatches.map(m => m.mid).join(",");
+  pageMatches.forEach(m => { chartDataCache[m.mid] = null; });
+
+  const datesRes = await fetch("/api/dates");
+  const datesData = await datesRes.json();
+  if (datesData.dates.join(",") !== currentDates.join(",")) {
+    renderDateBtns(datesData.dates, datesData.today);
+  }
+  document.querySelectorAll(".date-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.date === currentDate);
+  });
+
+  const matchRes = await fetch(`/api/matches?date=${currentDate}`);
+  const matchData = await matchRes.json();
+  allMatches = matchData.matches;
+
+  const newMids = allMatches.slice(start, start + PAGE_SIZE).map(m => m.mid).join(",");
+  if (newMids !== oldMids) {
+    await renderPage(currentPage);
+  } else {
+    await Promise.all(pageMatches.map(async m => {
+      const res = await fetch(`/api/chart/${m.mid}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      chartDataCache[m.mid] = data;
+      const containerId = `plot-${m.mid}`;
+      if (document.getElementById(containerId)) {
+        Plotly.react(containerId, buildTraces(data), getCardLayout(), { responsive: true });
+        updateSupportStrip(m.mid, data);
+      }
+    }));
+  }
+
+  const now = new Date().toLocaleTimeString("zh-CN");
+  document.getElementById("refresh-info").textContent = `更新于 ${now}`;
+}
+
+function updateRefreshBar() {
+  const pct = ((REFRESH_INTERVAL - refreshCountdown) / REFRESH_INTERVAL * 100).toFixed(1);
+  const bar = document.getElementById("refresh-bar");
+  bar.style.transition = "width 1s linear";
+  bar.style.width = pct + "%";
+}
+
+init();
+</script>
+</body>
+</html>

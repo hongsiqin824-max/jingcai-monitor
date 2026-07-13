@@ -126,6 +126,11 @@ def index():
     return send_from_directory(".", "dashboard.html")
 
 
+@app.route("/v2")
+def index_v2():
+    return send_from_directory(".", "dashboard_v2.html")
+
+
 @app.route("/api/dates")
 def api_dates():
     """
