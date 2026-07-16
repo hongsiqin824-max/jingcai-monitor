@@ -374,7 +374,7 @@ function mergeYRange(mid, newRange) {
 
 function getCardLayout(yRange) {
   return {
-    margin: { t: 8, r: 8, b: 52, l: 36 },
+    margin: { t: 8, r: 42, b: 52, l: 36 },
     xaxis: {
       tickangle: -30,
       tickfont: { size: 9, color: '#6B7A8D' },
@@ -397,7 +397,7 @@ function getCardLayout(yRange) {
 
 function getModalLayout(yRange) {
   return {
-    margin: { t: 16, r: 20, b: 55, l: 48 },
+    margin: { t: 16, r: 52, b: 55, l: 48 },
     xaxis: {
       title: { text: '采集时间', font: { color: '#6B7A8D', size: 12 } },
       tickangle: -30, tickfont: { color: '#6B7A8D' },
@@ -428,6 +428,38 @@ function buildTraces(data) {
       line: { color: "#3B82F6", width: 2.5 }, marker: { size: 4 } },
   ];
   return traces;
+}
+
+// 折线末端实时数值标注（胜/平/负各一个）
+function buildAnnotations(data) {
+  const n = data.times.length;
+  if (n === 0) return [];
+  const lastX = data.times[n - 1];
+  const raw = [
+    { val: data.win[n - 1],  color: "#ff4e42" },
+    { val: data.draw[n - 1], color: "#B87D0A" },
+    { val: data.loss[n - 1], color: "#3B82F6" },
+  ];
+  // 防止纵向重叠：按值升序排列，若相邻差 < 4，下推/上推 2 个单位
+  const sorted = raw.map((item, i) => ({ ...item, i })).sort((a, b) => a.val - b.val);
+  const yPos = sorted.map(item => item.val);
+  for (let i = 1; i < sorted.length; i++) {
+    if (yPos[i] - yPos[i - 1] < 4) {
+      yPos[i - 1] -= 2;
+      yPos[i]     += 2;
+    }
+  }
+  return sorted.map(({ val, color }, i) => ({
+    x: lastX,
+    y: yPos[i],
+    xanchor: "left", yanchor: "middle",
+    xshift: 6,
+    text: `<b>${val}%</b>`,
+    showarrow: false,
+    font: { size: 10, color },
+    bgcolor: "rgba(255,255,255,0.82)",
+    borderpad: 2,
+  }));
 }
 
 // ── init & date selection ──
@@ -526,6 +558,7 @@ async function loadAndRenderChart(mid, containerId, isModal) {
   }
   const yRange = mergeYRange(mid, calcYRange(data));
   const layout = isModal ? getModalLayout(yRange) : getCardLayout(yRange);
+  layout.annotations = buildAnnotations(data);
   Plotly.react(containerId, buildTraces(data), layout, { displayModeBar: isModal, responsive: true });
 }
 
@@ -630,7 +663,9 @@ async function silentRefresh() {
       const containerId = `plot-${m.mid}`;
       if (document.getElementById(containerId)) {
         const yRange = mergeYRange(m.mid, calcYRange(data));
-        Plotly.react(containerId, buildTraces(data), getCardLayout(yRange), { responsive: true });
+        const layout = getCardLayout(yRange);
+        layout.annotations = buildAnnotations(data);
+        Plotly.react(containerId, buildTraces(data), layout, { responsive: true });
       }
     }));
   }

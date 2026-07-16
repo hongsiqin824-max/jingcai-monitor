@@ -24,6 +24,16 @@
     }
     .header h1 { font-size: 20px; font-weight: 600; }
     .header .refresh-info { font-size: 13px; color: #aac4e0; }
+    /* 标记点模式切换按钮组 */
+    .marker-mode-group { display: flex; gap: 4px; }
+    .marker-mode-btn {
+      padding: 4px 10px; font-size: 12px; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.3); border-radius: 4px;
+      background: transparent; color: rgba(255,255,255,0.65);
+      transition: all 0.15s;
+    }
+    .marker-mode-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .marker-mode-btn.active { background: rgba(255,255,255,0.22); color: #fff; border-color: rgba(255,255,255,0.7); }
 
     /* 日期选择区 */
     .date-bar {
@@ -167,7 +177,65 @@
       line-height: 1;
     }
     .modal-close:hover { color: #333; }
-    #modal-chart { width: 100%; height: 520px; }
+
+    /* 弹窗视图切换导航栏 */
+    .modal-view-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .modal-nav-btn {
+      width: 28px; height: 28px;
+      border: 1px solid #d0d7e3;
+      border-radius: 4px;
+      background: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      color: #666;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+      line-height: 1;
+    }
+    .modal-nav-btn:hover { border-color: #1a3a5c; color: #1a3a5c; }
+    .modal-view-label {
+      font-size: 13px;
+      color: #888;
+      min-width: 100px;
+      text-align: center;
+      letter-spacing: 0.02em;
+    }
+
+    /* 弹窗时间区间筛选栏 */
+    .modal-time-filter {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .modal-time-filter-label {
+      font-size: 12px;
+      color: #aaa;
+      margin-right: 2px;
+      white-space: nowrap;
+    }
+    .modal-filter-btn {
+      padding: 3px 10px;
+      border: 1px solid #d0d7e3;
+      border-radius: 4px;
+      background: #fff;
+      font-size: 12px;
+      cursor: pointer;
+      color: #666;
+      transition: all 0.15s;
+    }
+    .modal-filter-btn:hover { border-color: #1a3a5c; color: #1a3a5c; }
+    .modal-filter-btn.active {
+      background: #1a3a5c;
+      color: #fff;
+      border-color: #1a3a5c;
+    }
+    #modal-chart { width: 100%; height: 560px; }
 
     /* 刷新倒计时指示器 */
     .refresh-bar {
@@ -185,6 +253,11 @@
 <!-- 顶部标题 -->
 <div class="header">
   <h1>竞彩足球 · 支持率变化监控</h1>
+  <div class="marker-mode-group">
+    <button class="marker-mode-btn" data-mode="all">全部</button>
+    <button class="marker-mode-btn active" data-mode="partial">部分</button>
+    <button class="marker-mode-btn" data-mode="none">隐藏</button>
+  </div>
   <div class="refresh-info" id="refresh-info">每5分钟自动更新</div>
 </div>
 
@@ -206,6 +279,18 @@
   <div class="modal-box">
     <div class="modal-title" id="modal-title"></div>
     <span class="modal-close" id="modal-close">&#x2715;</span>
+    <div class="modal-view-nav">
+      <button class="modal-nav-btn" id="modal-prev">&#x2039;</button>
+      <span class="modal-view-label" id="modal-view-label"></span>
+      <button class="modal-nav-btn" id="modal-next">&#x203a;</button>
+    </div>
+    <div class="modal-time-filter">
+      <span class="modal-time-filter-label">时间范围：</span>
+      <button class="modal-filter-btn active" data-hours="">全部</button>
+      <button class="modal-filter-btn" data-hours="12">12小时</button>
+      <button class="modal-filter-btn" data-hours="4">4小时</button>
+      <button class="modal-filter-btn" data-hours="1">1小时</button>
+    </div>
     <div id="modal-chart"></div>
   </div>
 </div>
@@ -228,6 +313,13 @@ let chartDataCache = {};       // 图表数据缓存 { mid: {times, win, draw, l
 let chartRangeCache = {};      // Y轴范围缓存 { mid: [low, high] }
 let refreshTimer = null;       // 倒计时 timer
 let refreshCountdown = REFRESH_INTERVAL;
+
+// 弹窗状态
+let modalMid = null;           // 当前弹窗的比赛 mid
+const MODAL_VIEWS = ["综合视图", "分离视图"];
+let modalViewIndex = 0;        // 0=综合, 1=分离
+let modalTimeFilter = null;    // null=全部, 数字=最近N小时
+let markerMode = "partial";    // "all" | "partial" | "none"
 
 // ============================================================
 // 1. 初始化：加载日期列表
@@ -333,7 +425,7 @@ async function renderPage(page) {
 }
 
 // ============================================================
-// 6. 加载并渲染单张图表（小图）
+// 6. 加载并渲染单张图表（小图 or 弹窗）
 // ============================================================
 async function loadAndRenderChart(mid, containerId, isModal) {
   // 先尝试缓存
@@ -353,37 +445,200 @@ async function loadAndRenderChart(mid, containerId, isModal) {
     }
   }
 
-  const yRange = mergeYRange(mid, calcYRange(data));
-  const layout = isModal ? getModalLayout(yRange) : getCardLayout(yRange);
-  const traces = buildTraces(data);
-  Plotly.react(containerId, traces, layout, { displayModeBar: isModal, responsive: true });
+  if (isModal) {
+    // 弹窗：三子图，每条线独立 Y 轴，紧贴数据范围
+    const ticks = computeAxisTicks(data.times, 12);
+    Plotly.react(containerId, buildSubplotTraces(data, ticks.formattedTimes),
+      getModalSubplotLayout(data, ticks.tickvals, ticks.ticktext),
+      { displayModeBar: true, responsive: true });
+  } else {
+    // 卡片：三线同轴，保持原逻辑
+    const yRange = mergeYRange(mid, calcYRange(data));
+    const ticks = computeAxisTicks(data.times, 8);
+    Plotly.react(containerId, buildTraces(data, ticks.formattedTimes),
+      getCardLayout(yRange, ticks.tickvals, ticks.ticktext),
+      { displayModeBar: false, responsive: true });
+  }
 }
 
 // ============================================================
 // 7. 构造折线图数据（三条线：胜/平/负）
 // ============================================================
-function buildTraces(data) {
+
+// "2026-07-13 10:15" → "7月13日 10:15"
+function fmtTime(s) {
+  const [date, time] = s.split(" ");
+  const [, m, d] = date.split("-");
+  return `${parseInt(m)}月${parseInt(d)}日 ${time}`;
+}
+
+/**
+ * 计算 X 轴刻度：
+ * - 第一个点 & 跨天点：显示完整 "M月D日 HH:MM"
+ * - 其余点：只显示 "HH:MM"
+ * - 均匀抽样到 maxTicks 个，保证第一个/跨天节点必选
+ */
+function computeAxisTicks(rawTimes, maxTicks) {
+  const fmt = rawTimes.map(fmtTime);
+  const n = rawTimes.length;
+  if (n === 0) return { formattedTimes: fmt, tickvals: [], ticktext: [] };
+
+  // Step 1: 锚点 —— 第一个点 + 跨天点（必须显示）
+  const anchors = new Set([0]);
+  for (let i = 1; i < n; i++) {
+    if (rawTimes[i].split(" ")[0] !== rawTimes[i - 1].split(" ")[0]) {
+      anchors.add(i);
+    }
+  }
+
+  // Step 2: 均匀采样，但与已选点距离 < minGap 的跳过
+  const step = Math.max(1, Math.floor(n / maxTicks));
+  const minGap = Math.max(2, Math.floor(step / 2));
+  const selected = new Set(anchors);
+
+  const isTooClose = (idx) => {
+    for (const s of selected) {
+      if (Math.abs(idx - s) < minGap) return true;
+    }
+    return false;
+  };
+
+  for (let i = 0; i < n; i += step) {
+    if (!isTooClose(i)) selected.add(i);
+  }
+
+  // Step 3: 末尾点只在距离够远时加入
+  if (!isTooClose(n - 1)) selected.add(n - 1);
+
+  // Step 4: 生成 tickvals / ticktext
+  const indices = [...selected].sort((a, b) => a - b);
+  const tickvals = indices.map(i => fmt[i]);
+  const ticktext = indices.map(i => {
+    const isDateChange = i === 0 || rawTimes[i].split(" ")[0] !== rawTimes[i - 1].split(" ")[0];
+    return isDateChange ? fmt[i] : rawTimes[i].split(" ")[1];
+  });
+
+  return { formattedTimes: fmt, tickvals, ticktext };
+}
+
+// ============================================================
+// 标记点模式：拐点检测 + 每条线的 marker 属性计算
+// ============================================================
+// 检测拐点：方向反转且单边变化 >= threshold%
+function detectInflections(vals, threshold = 1.5) {
+  const set = new Set();
+  for (let i = 1; i < vals.length - 1; i++) {
+    const d1 = vals[i] - vals[i - 1];
+    const d2 = vals[i + 1] - vals[i];
+    if (d1 * d2 < 0 && Math.abs(d1) >= threshold && Math.abs(d2) >= threshold) {
+      set.add(i);
+    }
+  }
+  return set;
+}
+
+// 根据 markerMode 返回 traceMode 和 markerSizes
+// sizes 为数组时：拐点=7, 采样点=4, 其余=0；为数字时统一大小
+function getMarkerProps(vals) {
+  const n = vals.length;
+  if (markerMode === "none") return { traceMode: "lines+text", sizes: 0 };
+  if (markerMode === "all")  return { traceMode: "lines+markers+text", sizes: 5 };
+
+  // "partial"：首尾固定 + 均匀采样（目标~15点）+ 拐点
+  const inflections = detectInflections(vals);
+  const step = Math.max(1, Math.ceil(n / 15));
+  const selected = new Set([0, n - 1]);
+  for (let i = 0; i < n; i += step) selected.add(i);
+  inflections.forEach(i => selected.add(i));
+  const sizes = vals.map((_, i) =>
+    inflections.has(i) ? 7 : selected.has(i) ? 4 : 0
+  );
+  return { traceMode: "lines+markers+text", sizes };
+}
+
+function buildTraces(data, formattedTimes) {
+  const n = data.win.length;
+  const makeText = (vals) => vals.map((v, i) => i === n - 1 ? `${v}%` : "");
+
+  // 按最后一个值排名分配 textposition，避免标签重叠
+  const ranked = [
+    { key: "win",  val: n > 0 ? data.win[n - 1]  : 0 },
+    { key: "draw", val: n > 0 ? data.draw[n - 1] : 0 },
+    { key: "loss", val: n > 0 ? data.loss[n - 1] : 0 },
+  ].sort((a, b) => b.val - a.val);
+  const posMap = {
+    [ranked[0].key]: "top right",
+    [ranked[1].key]: "middle right",
+    [ranked[2].key]: "bottom right",
+  };
+
+  const mWin  = getMarkerProps(data.win);
+  const mDraw = getMarkerProps(data.draw);
+  const mLoss = getMarkerProps(data.loss);
+
   return [
     {
-      x: data.times, y: data.win,
-      mode: "lines+markers",
-      name: "胜",
-      line: { color: "#e74c3c", width: 2 },
-      marker: { size: 5 },
+      x: formattedTimes, y: data.win,
+      mode: mWin.traceMode, name: "胜",
+      text: makeText(data.win), textposition: posMap.win,
+      textfont: { size: 11, color: "#e74c3c" }, cliponaxis: false,
+      hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
+      line: { color: "#e74c3c", width: 2 }, marker: { size: mWin.sizes, color: "#e74c3c" },
     },
     {
-      x: data.times, y: data.draw,
-      mode: "lines+markers",
-      name: "平",
-      line: { color: "#f39c12", width: 2 },
-      marker: { size: 5 },
+      x: formattedTimes, y: data.draw,
+      mode: mDraw.traceMode, name: "平",
+      text: makeText(data.draw), textposition: posMap.draw,
+      textfont: { size: 11, color: "#f39c12" }, cliponaxis: false,
+      hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
+      line: { color: "#f39c12", width: 2 }, marker: { size: mDraw.sizes, color: "#f39c12" },
     },
     {
-      x: data.times, y: data.loss,
-      mode: "lines+markers",
-      name: "负",
-      line: { color: "#2980b9", width: 2 },
-      marker: { size: 5 },
+      x: formattedTimes, y: data.loss,
+      mode: mLoss.traceMode, name: "负",
+      text: makeText(data.loss), textposition: posMap.loss,
+      textfont: { size: 11, color: "#2980b9" }, cliponaxis: false,
+      hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
+      line: { color: "#2980b9", width: 2 }, marker: { size: mLoss.sizes, color: "#2980b9" },
+    },
+  ];
+}
+
+// 弹窗子图用：三条线分别绑定独立坐标轴
+function buildSubplotTraces(data, formattedTimes) {
+  const n = data.win.length;
+  const makeText = (vals) => vals.map((v, i) => i === n - 1 ? `${v}%` : "");
+  const mWin  = getMarkerProps(data.win);
+  const mDraw = getMarkerProps(data.draw);
+  const mLoss = getMarkerProps(data.loss);
+
+  return [
+    {
+      x: formattedTimes, y: data.win,
+      mode: mWin.traceMode, name: "胜",
+      text: makeText(data.win), textposition: "middle right",
+      textfont: { size: 12, color: "#e74c3c" }, cliponaxis: false,
+      hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
+      line: { color: "#e74c3c", width: 2 }, marker: { size: mWin.sizes, color: "#e74c3c" },
+      xaxis: "x", yaxis: "y",
+    },
+    {
+      x: formattedTimes, y: data.draw,
+      mode: mDraw.traceMode, name: "平",
+      text: makeText(data.draw), textposition: "middle right",
+      textfont: { size: 12, color: "#f39c12" }, cliponaxis: false,
+      hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
+      line: { color: "#f39c12", width: 2 }, marker: { size: mDraw.sizes, color: "#f39c12" },
+      xaxis: "x2", yaxis: "y2",
+    },
+    {
+      x: formattedTimes, y: data.loss,
+      mode: mLoss.traceMode, name: "负",
+      text: makeText(data.loss), textposition: "middle right",
+      textfont: { size: 12, color: "#2980b9" }, cliponaxis: false,
+      hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
+      line: { color: "#2980b9", width: 2 }, marker: { size: mLoss.sizes, color: "#2980b9" },
+      xaxis: "x3", yaxis: "y3",
     },
   ];
 }
@@ -393,9 +648,19 @@ function calcYRange(data) {
   if (!allVals.length) return [0, 100];
   const dataMin = Math.min(...allVals);
   const dataMax = Math.max(...allVals);
-  const low  = Math.max(0,   Math.floor((dataMin - 5) / 5) * 5);
-  const high = Math.min(100, Math.ceil( (dataMax + 5) / 5) * 5);
+  const low  = Math.max(0,   dataMin - 2);
+  const high = Math.min(100, dataMax + 2);
   return [low, high];
+}
+
+// 单条线的紧缩 Y 轴范围（用于弹窗子图）
+function calcSingleYRange(vals) {
+  if (!vals || !vals.length) return [0, 100];
+  const dataMin = Math.min(...vals);
+  const dataMax = Math.max(...vals);
+  // padding 取波动幅度的 20%，最少 2 个百分点
+  const pad = Math.max(2, Math.round((dataMax - dataMin) * 0.2));
+  return [Math.max(0, dataMin - pad), Math.min(100, dataMax + pad)];
 }
 
 function mergeYRange(mid, newRange) {
@@ -407,25 +672,102 @@ function mergeYRange(mid, newRange) {
 }
 
 // 小卡片布局
-function getCardLayout(yRange) {
+function getCardLayout(yRange, tickvals, ticktext) {
   return {
-    margin: { t: 10, r: 10, b: 65, l: 40 },
-    xaxis: { tickangle: -30, tickfont: { size: 10 } },
+    margin: { t: 20, r: 42, b: 40, l: 40 },
+    xaxis: {
+      tickangle: -15, tickfont: { size: 10 },
+      tickmode: "array", tickvals, ticktext,
+    },
     yaxis: { range: yRange || [0, 100], ticksuffix: "%", tickfont: { size: 10 } },
-    legend: { orientation: "h", y: 1.12, x: 0.5, xanchor: "center", font: { size: 11 } },
+    legend: {
+      orientation: "h",
+      x: 0.5, xanchor: "center",
+      y: 1.0, yanchor: "bottom",
+      font: { size: 10 },
+    },
     hovermode: "x unified",
     plot_bgcolor: "#f9f9f9",
     paper_bgcolor: "#fff",
   };
 }
 
-// 放大弹窗布局
+// 放大弹窗布局（三子图，各自独立 Y 轴）
+function getModalSubplotLayout(data, tickvals, ticktext) {
+  const winRange  = calcSingleYRange(data.win);
+  const drawRange = calcSingleYRange(data.draw);
+  const lossRange = calcSingleYRange(data.loss);
+
+  const sharedYAxis = {
+    tickfont: { size: 10, color: "#666" },
+    gridcolor: "#eee",
+    linecolor: "#ddd",
+    zerolinecolor: "#eee",
+    ticksuffix: "%",
+  };
+
+  const sharedXAxis = {
+    tickfont: { size: 10, color: "#666" },
+    gridcolor: "#eee",
+    linecolor: "#ddd",
+    zerolinecolor: "#eee",
+  };
+
+  return {
+    grid: { rows: 3, columns: 1, pattern: "independent", roworder: "top to bottom" },
+    margin: { t: 20, r: 45, b: 50, l: 58 },
+
+    xaxis:  { ...sharedXAxis, showticklabels: false },
+    xaxis2: { ...sharedXAxis, showticklabels: false },
+    xaxis3: { ...sharedXAxis, tickangle: -30,
+               tickmode: "array", tickvals, ticktext },
+
+    yaxis:  { ...sharedYAxis, range: winRange,
+               title: { text: "胜 (%)", font: { size: 12, color: "#e74c3c" } } },
+    yaxis2: { ...sharedYAxis, range: drawRange,
+               title: { text: "平 (%)", font: { size: 12, color: "#f39c12" } } },
+    yaxis3: { ...sharedYAxis, range: lossRange,
+               title: { text: "负 (%)", font: { size: 12, color: "#2980b9" } } },
+
+    showlegend: false,
+    hovermode: "x",
+    plot_bgcolor: "#f9f9f9",
+    paper_bgcolor: "#fff",
+  };
+}
+
+// 放大弹窗布局（旧版，保留备用）
 function getModalLayout(yRange) {
   return {
     margin: { t: 20, r: 20, b: 60, l: 50 },
     xaxis: { title: "采集时间", tickangle: -30 },
     yaxis: { title: "支持率 (%)", range: yRange || [0, 100], ticksuffix: "%" },
     legend: { orientation: "h", y: 1.05, x: 0.5, xanchor: "center" },
+    hovermode: "x unified",
+    plot_bgcolor: "#f9f9f9",
+    paper_bgcolor: "#fff",
+  };
+}
+
+// 弹窗综合视图布局：三线同轴，Y 轴紧缩
+function getModalCombinedLayout(yRange, tickvals, ticktext) {
+  return {
+    margin: { t: 40, r: 45, b: 70, l: 52 },
+    xaxis: {
+      tickangle: -30,
+      tickfont: { color: "#666" },
+      gridcolor: "#eee", linecolor: "#ddd", zerolinecolor: "#eee",
+      tickmode: "array", tickvals, ticktext,
+    },
+    yaxis: {
+      title: { text: "支持率 (%)", font: { size: 12, color: "#666" } },
+      range: yRange || [0, 100],
+      ticksuffix: "%",
+      tickfont: { color: "#666" },
+      gridcolor: "#eee", linecolor: "#ddd", zerolinecolor: "#eee",
+    },
+    legend: { orientation: "h", y: 1.02, yanchor: "bottom", x: 0.5, xanchor: "center",
+              font: { size: 13 } },
     hovermode: "x unified",
     plot_bgcolor: "#f9f9f9",
     paper_bgcolor: "#fff",
@@ -476,24 +818,138 @@ function makePagerBtn(text, disabled, onClick) {
 // ============================================================
 // 9. 双击放大弹窗
 // ============================================================
-function openModal(mid, title) {
-  document.getElementById("modal-title").textContent = title;
-  document.getElementById("modal-overlay").classList.add("show");
-  // 重新从 API 获取最新数据渲染大图
-  chartDataCache[mid] = null; // 强制刷新
-  loadAndRenderChart(mid, "modal-chart", true);
-}
-
-document.getElementById("modal-close").onclick = () => {
+function closeModal() {
   document.getElementById("modal-overlay").classList.remove("show");
   Plotly.purge("modal-chart");
-};
-document.getElementById("modal-overlay").onclick = (e) => {
-  if (e.target === document.getElementById("modal-overlay")) {
-    document.getElementById("modal-overlay").classList.remove("show");
-    Plotly.purge("modal-chart");
+  modalMid = null;
+}
+
+function updateModalViewLabel() {
+  document.getElementById("modal-view-label").textContent =
+    `${MODAL_VIEWS[modalViewIndex]}  ${modalViewIndex + 1}/${MODAL_VIEWS.length}`;
+}
+
+async function renderModalView() {
+  const mid = modalMid;
+  if (!mid) return;
+
+  let data = chartDataCache[mid];
+  if (!data) {
+    try {
+      const res = await fetch(`/api/chart/${mid}`);
+      if (!res.ok) { showNoData("modal-chart"); return; }
+      data = await res.json();
+      chartDataCache[mid] = data;
+    } catch (e) {
+      showNoData("modal-chart");
+      return;
+    }
   }
+
+  // 按时间区间过滤
+  const filtered = filterDataByHours(data, modalTimeFilter);
+  const ticks = computeAxisTicks(filtered.times, 12);
+
+  // 每次强制完整重绘，避免 react 复用旧状态导致标签丢失
+  Plotly.purge("modal-chart");
+
+  if (modalViewIndex === 0) {
+    // 综合视图：三线同轴放大
+    const yRange = calcYRange(filtered);
+    Plotly.newPlot("modal-chart",
+      buildTraces(filtered, ticks.formattedTimes),
+      getModalCombinedLayout(yRange, ticks.tickvals, ticks.ticktext),
+      { displayModeBar: true, responsive: true });
+  } else {
+    // 分离视图：三子图独立 Y 轴
+    Plotly.newPlot("modal-chart",
+      buildSubplotTraces(filtered, ticks.formattedTimes),
+      getModalSubplotLayout(filtered, ticks.tickvals, ticks.ticktext),
+      { displayModeBar: true, responsive: true });
+  }
+}
+
+function openModal(mid, title) {
+  modalMid = mid;
+  modalViewIndex = 0;           // 每次打开默认回到综合视图
+  modalTimeFilter = null;       // 每次打开重置为全部
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-overlay").classList.add("show");
+  updateModalViewLabel();
+  updateFilterBtns();
+  chartDataCache[mid] = null;   // 强制拉最新数据
+  renderModalView();
+}
+
+document.getElementById("modal-close").onclick = closeModal;
+document.getElementById("modal-overlay").onclick = (e) => {
+  if (e.target === document.getElementById("modal-overlay")) closeModal();
 };
+document.getElementById("modal-prev").onclick = () => {
+  modalViewIndex = (modalViewIndex - 1 + MODAL_VIEWS.length) % MODAL_VIEWS.length;
+  updateModalViewLabel();
+  renderModalView();
+};
+document.getElementById("modal-next").onclick = () => {
+  modalViewIndex = (modalViewIndex + 1) % MODAL_VIEWS.length;
+  updateModalViewLabel();
+  renderModalView();
+};
+
+// 时间区间筛选按钮高亮同步
+function updateFilterBtns() {
+  document.querySelectorAll(".modal-filter-btn").forEach(btn => {
+    const h = btn.dataset.hours;
+    const isActive = (h === "" && modalTimeFilter === null) ||
+                     (h !== "" && Number(h) === modalTimeFilter);
+    btn.classList.toggle("active", isActive);
+  });
+}
+
+// 绑定筛选按钮点击
+document.querySelectorAll(".modal-filter-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const h = btn.dataset.hours;
+    modalTimeFilter = h === "" ? null : Number(h);
+    updateFilterBtns();
+    renderModalView();
+  });
+});
+
+/**
+ * 按时间区间截取数据：保留最近 hours 小时内的数据点。
+ * hours 为 null 时返回原始数据（全部）。
+ */
+function filterDataByHours(data, hours) {
+  if (!hours || !data.times.length) return data;
+
+  // 以最后一个时间点为基准，向前推 hours 小时
+  const lastStr = data.times[data.times.length - 1];
+  const [ld, lt] = lastStr.split(" ");
+  const [ly, lm, lday] = ld.split("-").map(Number);
+  const [lh, lmin] = lt.split(":").map(Number);
+  const lastMs = new Date(ly, lm - 1, lday, lh, lmin).getTime();
+  const cutoffMs = lastMs - hours * 3600 * 1000;
+
+  // 找到第一个 >= cutoff 的索引
+  const startIdx = data.times.findIndex(t => {
+    const [d, time] = t.split(" ");
+    const [y, m, day] = d.split("-").map(Number);
+    const [h, min] = time.split(":").map(Number);
+    return new Date(y, m - 1, day, h, min).getTime() >= cutoffMs;
+  });
+
+  if (startIdx <= 0) return data;
+
+  return {
+    mid:         data.mid,
+    times:       data.times.slice(startIdx),
+    win:         data.win.slice(startIdx),
+    draw:        data.draw.slice(startIdx),
+    loss:        data.loss.slice(startIdx),
+    total_votes: data.total_votes ? data.total_votes.slice(startIdx) : [],
+  };
+}
 
 // ============================================================
 // 10. 静默刷新：每5分钟更新当前页图表数据
@@ -559,7 +1015,9 @@ async function silentRefresh() {
       const containerId = `plot-${m.mid}`;
       if (document.getElementById(containerId)) {
         const yRange = mergeYRange(m.mid, calcYRange(data));
-        Plotly.react(containerId, buildTraces(data), getCardLayout(yRange), { responsive: true });
+        const ticks = computeAxisTicks(data.times, 8);
+        Plotly.react(containerId, buildTraces(data, ticks.formattedTimes),
+          getCardLayout(yRange, ticks.tickvals, ticks.ticktext), { responsive: true });
       }
     }));
   }
@@ -574,6 +1032,31 @@ function updateRefreshBar() {
   bar.style.transition = "width 1s linear";
   bar.style.width = pct + "%";
 }
+
+// ============================================================
+// 标记点模式切换
+// ============================================================
+function applyMarkerMode(mode) {
+  markerMode = mode;
+  document.querySelectorAll(".marker-mode-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  // 重渲染当前页（使用缓存数据，不重新请求 API）
+  const start = (currentPage - 1) * PAGE_SIZE;
+  allMatches.slice(start, start + PAGE_SIZE).forEach(m => {
+    const data = chartDataCache[m.mid];
+    if (!data) return;
+    const { formattedTimes, tickvals, ticktext } = computeAxisTicks(data.times, 8);
+    const yRange = mergeYRange(m.mid, calcYRange(data));
+    Plotly.react(`plot-${m.mid}`, buildTraces(data, formattedTimes), getCardLayout(yRange, tickvals, ticktext));
+  });
+  // 弹窗已打开时同步更新
+  if (modalMid) renderModalView();
+}
+
+document.querySelectorAll(".marker-mode-btn").forEach(btn => {
+  btn.addEventListener("click", () => applyMarkerMode(btn.dataset.mode));
+});
 
 // ============================================================
 // 启动
