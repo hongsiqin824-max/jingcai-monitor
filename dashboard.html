@@ -74,10 +74,10 @@
     }
     .stats span { color: #1a3a5c; font-weight: 600; }
 
-    /* 图表网格：2列，每页4张 */
+    /* 图表网格：3列，每页6张 */
     .chart-grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 20px;
     }
 
@@ -106,7 +106,7 @@
     }
     .chart-card .plotly-container {
       width: 100%;
-      height: 260px;
+      height: 504px;
     }
 
     /* 无数据提示 */
@@ -115,7 +115,7 @@
       color: #aaa;
       font-size: 15px;
       padding: 60px 0;
-      grid-column: span 2;
+      grid-column: span 3;
     }
 
     /* 分页控件 */
@@ -158,6 +158,8 @@
       border-radius: 12px;
       width: 90vw;
       max-width: 1100px;
+      max-height: 92vh;
+      overflow-y: auto;
       padding: 16px;
       position: relative;
     }
@@ -235,7 +237,7 @@
       color: #fff;
       border-color: #1a3a5c;
     }
-    #modal-chart { width: 100%; height: 560px; }
+    #modal-chart { width: 100%; height: 780px; }
 
     /* 刷新倒计时指示器 */
     .refresh-bar {
@@ -302,7 +304,7 @@
 // ============================================================
 // 全局状态
 // ============================================================
-const PAGE_SIZE = 4;           // 每页展示4场
+const PAGE_SIZE = 6;           // 每页展示6场（3列×2行）
 const REFRESH_INTERVAL = 300;  // 静默刷新间隔（秒），与采集频率一致
 
 let currentDate = "";          // 当前选中的日期
@@ -313,6 +315,7 @@ let chartDataCache = {};       // 图表数据缓存 { mid: {times, win, draw, l
 let chartRangeCache = {};      // Y轴范围缓存 { mid: [low, high] }
 let refreshTimer = null;       // 倒计时 timer
 let refreshCountdown = REFRESH_INTERVAL;
+let lastCollectionTime = null; // 最近一次采集数据的时间戳（来自CSV，非浏览器时间）
 
 // 弹窗状态
 let modalMid = null;           // 当前弹窗的比赛 mid
@@ -320,6 +323,31 @@ const MODAL_VIEWS = ["综合视图", "分离视图"];
 let modalViewIndex = 0;        // 0=综合, 1=分离
 let modalTimeFilter = null;    // null=全部, 数字=最近N小时
 let markerMode = "partial";    // "all" | "partial" | "none"
+
+// ============================================================
+// 辅助：更新右上角"上次采集"时间（取自数据时间戳，非浏览器时间）
+// ============================================================
+function updateCollectionTimeDisplay() {
+  const el = document.getElementById("refresh-info");
+  if (!lastCollectionTime) {
+    el.textContent = "每5分钟自动更新";
+    return;
+  }
+  // "2026-07-15 11:05" → "7月15日 11:05"
+  const [date, time] = lastCollectionTime.split(" ");
+  const [, m, d] = date.split("-");
+  el.textContent = `上次采集：${parseInt(m)}月${parseInt(d)}日 ${time} · 每5分钟自动更新`;
+}
+
+// 记录并刷新上次采集时间（取 times 数组最后一项）
+function trackCollectionTime(data) {
+  if (!data.times || !data.times.length) return;
+  const t = data.times[data.times.length - 1];
+  if (!lastCollectionTime || t > lastCollectionTime) {
+    lastCollectionTime = t;
+    updateCollectionTimeDisplay();
+  }
+}
 
 // ============================================================
 // 1. 初始化：加载日期列表
@@ -361,6 +389,7 @@ async function selectDate(date) {
   currentPage = 1;
   chartDataCache = {};
   chartRangeCache = {};
+  lastCollectionTime = null;   // 切换日期时重置采集时间
 
   // 更新按钮高亮
   document.querySelectorAll(".date-btn").forEach(btn => {
@@ -452,11 +481,10 @@ async function loadAndRenderChart(mid, containerId, isModal) {
       getModalSubplotLayout(data, ticks.tickvals, ticks.ticktext),
       { displayModeBar: true, responsive: true });
   } else {
-    // 卡片：三线同轴，保持原逻辑
-    const yRange = mergeYRange(mid, calcYRange(data));
+    // 卡片：三线分离子图，各自独立 Y 轴
     const ticks = computeAxisTicks(data.times, 8);
-    Plotly.react(containerId, buildTraces(data, ticks.formattedTimes),
-      getCardLayout(yRange, ticks.tickvals, ticks.ticktext),
+    Plotly.react(containerId, buildSubplotTraces(data, ticks.formattedTimes),
+      getCardSubplotLayout(data, ticks.tickvals, ticks.ticktext),
       { displayModeBar: false, responsive: true });
   }
 }
@@ -558,7 +586,8 @@ function getMarkerProps(vals) {
 
 function buildTraces(data, formattedTimes) {
   const n = data.win.length;
-  const makeText = (vals) => vals.map((v, i) => i === n - 1 ? `${v}%` : "");
+  // 首尾两点都显示数值标签
+  const makeText = (vals) => vals.map((v, i) => (i === 0 || i === n - 1) ? `${v}%` : "");
 
   // 按最后一个值排名分配 textposition，避免标签重叠
   const ranked = [
@@ -571,6 +600,10 @@ function buildTraces(data, formattedTimes) {
     [ranked[1].key]: "middle right",
     [ranked[2].key]: "bottom right",
   };
+  // 第一个点用对应的左侧位置
+  const toLeft = (p) => p.replace("right", "left");
+  const makeTextPos = (key) =>
+    Array.from({ length: n }, (_, i) => i === 0 ? toLeft(posMap[key]) : posMap[key]);
 
   const mWin  = getMarkerProps(data.win);
   const mDraw = getMarkerProps(data.draw);
@@ -580,7 +613,7 @@ function buildTraces(data, formattedTimes) {
     {
       x: formattedTimes, y: data.win,
       mode: mWin.traceMode, name: "胜",
-      text: makeText(data.win), textposition: posMap.win,
+      text: makeText(data.win), textposition: makeTextPos("win"),
       textfont: { size: 11, color: "#e74c3c" }, cliponaxis: false,
       hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
       line: { color: "#e74c3c", width: 2 }, marker: { size: mWin.sizes, color: "#e74c3c" },
@@ -588,7 +621,7 @@ function buildTraces(data, formattedTimes) {
     {
       x: formattedTimes, y: data.draw,
       mode: mDraw.traceMode, name: "平",
-      text: makeText(data.draw), textposition: posMap.draw,
+      text: makeText(data.draw), textposition: makeTextPos("draw"),
       textfont: { size: 11, color: "#f39c12" }, cliponaxis: false,
       hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
       line: { color: "#f39c12", width: 2 }, marker: { size: mDraw.sizes, color: "#f39c12" },
@@ -596,7 +629,7 @@ function buildTraces(data, formattedTimes) {
     {
       x: formattedTimes, y: data.loss,
       mode: mLoss.traceMode, name: "负",
-      text: makeText(data.loss), textposition: posMap.loss,
+      text: makeText(data.loss), textposition: makeTextPos("loss"),
       textfont: { size: 11, color: "#2980b9" }, cliponaxis: false,
       hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
       line: { color: "#2980b9", width: 2 }, marker: { size: mLoss.sizes, color: "#2980b9" },
@@ -607,7 +640,10 @@ function buildTraces(data, formattedTimes) {
 // 弹窗子图用：三条线分别绑定独立坐标轴
 function buildSubplotTraces(data, formattedTimes) {
   const n = data.win.length;
-  const makeText = (vals) => vals.map((v, i) => i === n - 1 ? `${v}%` : "");
+  // 首尾两点都显示数值标签
+  const makeText = (vals) => vals.map((v, i) => (i === 0 || i === n - 1) ? `${v}%` : "");
+  // 第一个点在左侧，其余在右侧
+  const textPos = Array.from({ length: n }, (_, i) => i === 0 ? "middle left" : "middle right");
   const mWin  = getMarkerProps(data.win);
   const mDraw = getMarkerProps(data.draw);
   const mLoss = getMarkerProps(data.loss);
@@ -616,7 +652,7 @@ function buildSubplotTraces(data, formattedTimes) {
     {
       x: formattedTimes, y: data.win,
       mode: mWin.traceMode, name: "胜",
-      text: makeText(data.win), textposition: "middle right",
+      text: makeText(data.win), textposition: textPos,
       textfont: { size: 12, color: "#e74c3c" }, cliponaxis: false,
       hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
       line: { color: "#e74c3c", width: 2 }, marker: { size: mWin.sizes, color: "#e74c3c" },
@@ -625,7 +661,7 @@ function buildSubplotTraces(data, formattedTimes) {
     {
       x: formattedTimes, y: data.draw,
       mode: mDraw.traceMode, name: "平",
-      text: makeText(data.draw), textposition: "middle right",
+      text: makeText(data.draw), textposition: textPos,
       textfont: { size: 12, color: "#f39c12" }, cliponaxis: false,
       hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
       line: { color: "#f39c12", width: 2 }, marker: { size: mDraw.sizes, color: "#f39c12" },
@@ -634,7 +670,7 @@ function buildSubplotTraces(data, formattedTimes) {
     {
       x: formattedTimes, y: data.loss,
       mode: mLoss.traceMode, name: "负",
-      text: makeText(data.loss), textposition: "middle right",
+      text: makeText(data.loss), textposition: textPos,
       textfont: { size: 12, color: "#2980b9" }, cliponaxis: false,
       hovertemplate: "%{fullData.name}：%{y}<extra></extra>",
       line: { color: "#2980b9", width: 2 }, marker: { size: mLoss.sizes, color: "#2980b9" },
@@ -658,9 +694,7 @@ function calcSingleYRange(vals) {
   if (!vals || !vals.length) return [0, 100];
   const dataMin = Math.min(...vals);
   const dataMax = Math.max(...vals);
-  // padding 取波动幅度的 20%，最少 2 个百分点
-  const pad = Math.max(2, Math.round((dataMax - dataMin) * 0.2));
-  return [Math.max(0, dataMin - pad), Math.min(100, dataMax + pad)];
+  return [Math.max(0, dataMin - 1), Math.min(100, dataMax + 1)];
 }
 
 function mergeYRange(mid, newRange) {
@@ -692,6 +726,54 @@ function getCardLayout(yRange, tickvals, ticktext) {
   };
 }
 
+// 小卡片子图布局（三子图，各自独立 Y 轴，紧凑排列）
+function getCardSubplotLayout(data, tickvals, ticktext) {
+  const winRange  = calcSingleYRange(data.win);
+  const drawRange = calcSingleYRange(data.draw);
+  const lossRange = calcSingleYRange(data.loss);
+
+  const sharedYAxis = {
+    tickfont: { size: 9, color: "#666" },
+    gridcolor: "#eee", linecolor: "#ddd", zerolinecolor: "#eee",
+    ticksuffix: "%",
+  };
+  const sharedXAxis = {
+    tickfont: { size: 9, color: "#666" },
+    gridcolor: "#eee", linecolor: "#ddd",
+  };
+
+  return {
+    grid: { rows: 3, columns: 1, pattern: "independent", roworder: "top to bottom", ygap: 0.07 },
+    margin: { t: 14, r: 25, b: 36, l: 30 },
+
+    xaxis:  { ...sharedXAxis, showticklabels: false, tickmode: "array", tickvals, ticktext },
+    xaxis2: { ...sharedXAxis, showticklabels: false, tickmode: "array", tickvals, ticktext },
+    xaxis3: { ...sharedXAxis, tickangle: -15, tickmode: "array", tickvals, ticktext },
+
+    yaxis:  { ...sharedYAxis, range: winRange,
+               title: { text: "胜%", font: { size: 10, color: "#e74c3c" }, standoff: 4 } },
+    yaxis2: { ...sharedYAxis, range: drawRange,
+               title: { text: "平%", font: { size: 10, color: "#f39c12" }, standoff: 4 } },
+    yaxis3: { ...sharedYAxis, range: lossRange,
+               title: { text: "负%", font: { size: 10, color: "#2980b9" }, standoff: 4 } },
+
+    // 每个子图用极淡的对应色区分
+    shapes: [
+      { type: "rect", xref: "paper", yref: "y",  x0: 0, x1: 1,
+        y0: winRange[0],  y1: winRange[1],  fillcolor: "rgba(231,76,60,0.02)",  line: { width: 0 }, layer: "below" },
+      { type: "rect", xref: "paper", yref: "y2", x0: 0, x1: 1,
+        y0: drawRange[0], y1: drawRange[1], fillcolor: "rgba(243,156,18,0.02)", line: { width: 0 }, layer: "below" },
+      { type: "rect", xref: "paper", yref: "y3", x0: 0, x1: 1,
+        y0: lossRange[0], y1: lossRange[1], fillcolor: "rgba(41,128,185,0.02)", line: { width: 0 }, layer: "below" },
+    ],
+
+    showlegend: false,
+    hovermode: "x",
+    plot_bgcolor: "#fff",
+    paper_bgcolor: "#fff",
+  };
+}
+
 // 放大弹窗布局（三子图，各自独立 Y 轴）
 function getModalSubplotLayout(data, tickvals, ticktext) {
   const winRange  = calcSingleYRange(data.win);
@@ -714,13 +796,12 @@ function getModalSubplotLayout(data, tickvals, ticktext) {
   };
 
   return {
-    grid: { rows: 3, columns: 1, pattern: "independent", roworder: "top to bottom" },
+    grid: { rows: 3, columns: 1, pattern: "independent", roworder: "top to bottom", ygap: 0.07 },
     margin: { t: 20, r: 45, b: 50, l: 58 },
 
-    xaxis:  { ...sharedXAxis, showticklabels: false },
-    xaxis2: { ...sharedXAxis, showticklabels: false },
-    xaxis3: { ...sharedXAxis, tickangle: -30,
-               tickmode: "array", tickvals, ticktext },
+    xaxis:  { ...sharedXAxis, showticklabels: false, tickmode: "array", tickvals, ticktext },
+    xaxis2: { ...sharedXAxis, showticklabels: false, tickmode: "array", tickvals, ticktext },
+    xaxis3: { ...sharedXAxis, tickangle: -30, tickmode: "array", tickvals, ticktext },
 
     yaxis:  { ...sharedYAxis, range: winRange,
                title: { text: "胜 (%)", font: { size: 12, color: "#e74c3c" } } },
@@ -729,9 +810,18 @@ function getModalSubplotLayout(data, tickvals, ticktext) {
     yaxis3: { ...sharedYAxis, range: lossRange,
                title: { text: "负 (%)", font: { size: 12, color: "#2980b9" } } },
 
+    shapes: [
+      { type: "rect", xref: "paper", yref: "y",  x0: 0, x1: 1,
+        y0: winRange[0],  y1: winRange[1],  fillcolor: "rgba(231,76,60,0.02)",  line: { width: 0 }, layer: "below" },
+      { type: "rect", xref: "paper", yref: "y2", x0: 0, x1: 1,
+        y0: drawRange[0], y1: drawRange[1], fillcolor: "rgba(243,156,18,0.02)", line: { width: 0 }, layer: "below" },
+      { type: "rect", xref: "paper", yref: "y3", x0: 0, x1: 1,
+        y0: lossRange[0], y1: lossRange[1], fillcolor: "rgba(41,128,185,0.02)", line: { width: 0 }, layer: "below" },
+    ],
+
     showlegend: false,
     hovermode: "x",
-    plot_bgcolor: "#f9f9f9",
+    plot_bgcolor: "#fff",
     paper_bgcolor: "#fff",
   };
 }
@@ -871,7 +961,7 @@ async function renderModalView() {
 
 function openModal(mid, title) {
   modalMid = mid;
-  modalViewIndex = 0;           // 每次打开默认回到综合视图
+  modalViewIndex = 1;           // 默认分离视图（与卡片一致）
   modalTimeFilter = null;       // 每次打开重置为全部
   document.getElementById("modal-title").textContent = title;
   document.getElementById("modal-overlay").classList.add("show");
@@ -1014,16 +1104,15 @@ async function silentRefresh() {
       chartDataCache[m.mid] = data;
       const containerId = `plot-${m.mid}`;
       if (document.getElementById(containerId)) {
-        const yRange = mergeYRange(m.mid, calcYRange(data));
         const ticks = computeAxisTicks(data.times, 8);
-        Plotly.react(containerId, buildTraces(data, ticks.formattedTimes),
-          getCardLayout(yRange, ticks.tickvals, ticks.ticktext), { responsive: true });
+        Plotly.react(containerId, buildSubplotTraces(data, ticks.formattedTimes),
+          getCardSubplotLayout(data, ticks.tickvals, ticks.ticktext), { responsive: true });
       }
     }));
   }
 
-  const now = new Date().toLocaleTimeString("zh-CN");
-  document.getElementById("refresh-info").textContent = `上次更新：${now}，每5分钟自动刷新`;
+  document.getElementById("refresh-info").textContent =
+    `上次更新：${new Date().toLocaleTimeString("zh-CN")}`;
 }
 
 function updateRefreshBar() {
@@ -1047,8 +1136,8 @@ function applyMarkerMode(mode) {
     const data = chartDataCache[m.mid];
     if (!data) return;
     const { formattedTimes, tickvals, ticktext } = computeAxisTicks(data.times, 8);
-    const yRange = mergeYRange(m.mid, calcYRange(data));
-    Plotly.react(`plot-${m.mid}`, buildTraces(data, formattedTimes), getCardLayout(yRange, tickvals, ticktext));
+    Plotly.react(`plot-${m.mid}`, buildSubplotTraces(data, formattedTimes),
+      getCardSubplotLayout(data, tickvals, ticktext));
   });
   // 弹窗已打开时同步更新
   if (modalMid) renderModalView();
