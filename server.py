@@ -7,11 +7,19 @@
 浏览器访问：http://localhost:5000
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 import csv
 import os
+import re
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from html import escape
+from urllib.parse import quote
+from zoneinfo import ZoneInfo
+
+import plotly.graph_objects as go
+import plotly.io as pio
+from plotly.subplots import make_subplots
 
 app = Flask(__name__, static_folder=".")
 
@@ -23,6 +31,15 @@ _meta_cache = None
 _meta_cache_time = 0.0
 _META_CACHE_TTL = 60  # 缓存有效期（秒）
 _WEEKDAY_ORDER = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6}
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_MATCH_ID_PATTERN = re.compile(r"^\d{1,20}$")
+_CHART_WIDTH = 1068
+_CHART_HEIGHT = 860
+_CHART_COLORS = {
+    "win": "#e74c3c",
+    "draw": "#f39c12",
+    "loss": "#2980b9",
+}
 
 
 # ============================================================
@@ -114,11 +131,257 @@ def read_chart_data(mid):
     }
 
 
+def _format_chart_time(value):
+    """Convert a CSV timestamp to the same Chinese label used by dashboard.html."""
+    raw = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(raw, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return raw
+    return f"{parsed.month}月{parsed.day}日 {parsed:%H:%M}"
+
+
+def _compute_axis_ticks(raw_times, max_ticks=12):
+    """Keep first/day-change ticks and evenly sample the rest, matching the dashboard."""
+    formatted = [_format_chart_time(value) for value in raw_times]
+    count = len(raw_times)
+    if count == 0:
+        return formatted, [], []
+
+    anchors = {0}
+    for index in range(1, count):
+        current_day = str(raw_times[index]).split(" ", 1)[0]
+        previous_day = str(raw_times[index - 1]).split(" ", 1)[0]
+        if current_day != previous_day:
+            anchors.add(index)
+
+    step = max(1, count // max_ticks)
+    min_gap = max(2, step // 2)
+    selected = set(anchors)
+
+    def is_too_close(index):
+        return any(abs(index - existing) < min_gap for existing in selected)
+
+    for index in range(0, count, step):
+        if not is_too_close(index):
+            selected.add(index)
+    if not is_too_close(count - 1):
+        selected.add(count - 1)
+
+    indices = sorted(selected)
+    tick_values = [formatted[index] for index in indices]
+    tick_text = []
+    for index in indices:
+        current = str(raw_times[index])
+        current_day = current.split(" ", 1)[0]
+        previous_day = str(raw_times[index - 1]).split(" ", 1)[0] if index > 0 else ""
+        if index == 0 or current_day != previous_day:
+            tick_text.append(formatted[index])
+        else:
+            tick_text.append(current.split(" ", 1)[1] if " " in current else current)
+    return formatted, tick_values, tick_text
+
+
+def _single_y_range(values):
+    """Use the dashboard's tight independent range for one support-rate series."""
+    if not values:
+        return [0, 100]
+    return [max(0, min(values) - 1), min(100, max(values) + 1)]
+
+
+def _safe_download_filename(meta, mid):
+    issue_num = str(meta.get("比赛编号", "")).strip() or mid
+    home = str(meta.get("主队", "")).strip() or "主队"
+    away = str(meta.get("客队", "")).strip() or "客队"
+    filename = f"{issue_num}_{home}VS{away}_支持率.png"
+    filename = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", filename)
+    filename = re.sub(r"\s+", "", filename).strip("._")
+    return filename or f"{mid}_支持率.png"
+
+
+def build_support_rate_figure(mid):
+    """Build the downloadable three-panel Plotly figure for one match."""
+    if not _MATCH_ID_PATTERN.fullmatch(str(mid or "")):
+        raise ValueError("比赛 ID 格式无效")
+
+    data = read_chart_data(mid)
+    if data is None or not data.get("times"):
+        raise FileNotFoundError("暂无该场比赛的支持率数据")
+    meta = get_all_matches_meta().get(mid)
+    if not meta:
+        raise FileNotFoundError("暂无该场比赛的基础信息")
+
+    formatted_times, tick_values, tick_text = _compute_axis_ticks(data["times"], 12)
+    series = [
+        ("win", "胜", data["win"], 1),
+        ("draw", "平", data["draw"], 2),
+        ("loss", "负", data["loss"], 3),
+    ]
+    figure = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=False,
+        vertical_spacing=0.07,
+    )
+
+    for key, label, values, row in series:
+        point_count = len(values)
+        text = [""] * point_count
+        positions = ["middle right"] * point_count
+        if point_count:
+            text[0] = f"{values[0]}%"
+            positions[0] = "middle left"
+            if point_count > 1:
+                text[-1] = f"{values[-1]}%"
+                positions[-1] = "middle right"
+        figure.add_trace(
+            go.Scatter(
+                x=formatted_times,
+                y=values,
+                mode="lines+text",
+                name=label,
+                text=text,
+                textposition=positions,
+                textfont={"size": 12, "color": _CHART_COLORS[key]},
+                cliponaxis=False,
+                hovertemplate=f"{label}：%{{y}}<extra></extra>",
+                line={"color": _CHART_COLORS[key], "width": 2},
+            ),
+            row=row,
+            col=1,
+        )
+
+        y_range = _single_y_range(values)
+        figure.update_yaxes(
+            range=y_range,
+            ticksuffix="%",
+            tickfont={"size": 10, "color": "#666"},
+            gridcolor="#eee",
+            linecolor="#ddd",
+            zerolinecolor="#eee",
+            title={"text": f"{label} (%)", "font": {"size": 12, "color": _CHART_COLORS[key]}},
+            fixedrange=True,
+            row=row,
+            col=1,
+        )
+        figure.add_hrect(
+            y0=y_range[0],
+            y1=y_range[1],
+            fillcolor={
+                "win": "rgba(231,76,60,0.02)",
+                "draw": "rgba(243,156,18,0.02)",
+                "loss": "rgba(41,128,185,0.02)",
+            }[key],
+            line_width=0,
+            layer="below",
+            row=row,
+            col=1,
+        )
+
+        figure.update_xaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=formatted_times,
+            tickmode="array",
+            tickvals=tick_values,
+            ticktext=tick_text,
+            showticklabels=row == 3,
+            tickangle=-30 if row == 3 else 0,
+            tickfont={"size": 10, "color": "#666"},
+            gridcolor="#eee",
+            linecolor="#ddd",
+            zerolinecolor="#eee",
+            fixedrange=True,
+            row=row,
+            col=1,
+        )
+
+    home = str(meta.get("主队", "")).strip() or "主队"
+    away = str(meta.get("客队", "")).strip() or "客队"
+    subtitle_parts = [
+        str(meta.get("比赛编号", "")).strip(),
+        str(meta.get("联赛", "")).strip(),
+        str(meta.get("比赛日期", "")).strip(),
+    ]
+    subtitle = " · ".join(part for part in subtitle_parts if part)
+    title_home = escape(home)
+    title_away = escape(away)
+    title_subtitle = escape(subtitle)
+    figure.update_layout(
+        width=_CHART_WIDTH,
+        height=_CHART_HEIGHT,
+        margin={"t": 102, "r": 39, "b": 56, "l": 52},
+        title={
+            "text": (
+                f"<b>{title_home} VS {title_away}</b>"
+                f"<br><span style='font-size:14px;color:#666'>{title_subtitle}</span>"
+            ),
+            "x": 0.5,
+            "xanchor": "center",
+            "y": 0.975,
+            "yanchor": "top",
+            "font": {"family": "PingFang SC, Microsoft YaHei, Arial, sans-serif", "size": 22, "color": "#1a3a5c"},
+        },
+        font={"family": "PingFang SC, Microsoft YaHei, Arial, sans-serif", "color": "#333"},
+        showlegend=False,
+        hovermode="x",
+        plot_bgcolor="#fff",
+        paper_bgcolor="#fff",
+    )
+    return figure, meta
+
+
+def render_support_rate_png(mid):
+    figure, meta = build_support_rate_figure(mid)
+    # Plotly 6.9 currently supplies an HTTP header option that Kaleido 1.2's
+    # Chromium wrapper does not accept. It is unnecessary for local rendering.
+    pio.defaults.headers = None
+    image = figure.to_image(
+        format="png",
+        width=_CHART_WIDTH,
+        height=_CHART_HEIGHT,
+        scale=1,
+    )
+    return image, _safe_download_filename(meta, mid)
+
+
 def _match_num_key(num):
     if len(num) >= 2 and num[1] in _WEEKDAY_ORDER:
         suffix = num[2:]
-        return (_WEEKDAY_ORDER[num[1]], int(suffix) if suffix.isdigit() else suffix)
-    return (7, num)
+        if suffix.isdigit():
+            return (_WEEKDAY_ORDER[num[1]], 0, int(suffix))
+        return (_WEEKDAY_ORDER[num[1]], 1, suffix)
+    return (7, 1, num)
+
+
+def get_upcoming_matches(today=None):
+    """返回今天起所有已采集到的竞彩编号日比赛。"""
+    start_date = today or datetime.now(_SHANGHAI_TZ).date().isoformat()
+    start_day = date.fromisoformat(start_date)
+    matches = []
+    for match in get_all_matches_meta().values():
+        business_date = str(match.get("销售日期", "")).strip()
+        try:
+            business_day = date.fromisoformat(business_date)
+        except ValueError:
+            continue
+        if business_day < start_day:
+            continue
+        matches.append({
+            "matchId": str(match.get("mid", "")).strip(),
+            "issueNum": str(match.get("比赛编号", "")).strip(),
+            "businessDate": business_date,
+            "matchDate": str(match.get("比赛日期", "")).strip(),
+            "competitionName": str(match.get("联赛", "")).strip(),
+            "homeTeam": str(match.get("主队", "")).strip(),
+            "awayTeam": str(match.get("客队", "")).strip(),
+        })
+    matches.sort(key=lambda item: (
+        item["businessDate"],
+        _match_num_key(item["issueNum"]),
+        item["matchId"],
+    ))
+    return matches
 
 
 # ============================================================
@@ -177,6 +440,22 @@ def api_matches():
     return jsonify({"date": date, "total": len(matches), "matches": matches})
 
 
+@app.route("/api/matches/upcoming")
+def api_upcoming_matches():
+    """返回上海时区今天起，所有 CSV 中已有数据的竞彩比赛。"""
+    today = datetime.now(_SHANGHAI_TZ).date().isoformat()
+    matches = get_upcoming_matches(today)
+    business_dates = sorted({item["businessDate"] for item in matches})
+    return jsonify({
+        "ok": True,
+        "date": today,
+        "businessDateStart": business_dates[0] if business_dates else today,
+        "businessDateEnd": business_dates[-1] if business_dates else "",
+        "total": len(matches),
+        "matches": matches,
+    })
+
+
 @app.route("/api/chart/<mid>")
 def api_chart(mid):
     """
@@ -187,6 +466,33 @@ def api_chart(mid):
     if data is None:
         return jsonify({"error": "暂无数据"}), 404
     return jsonify(data)
+
+
+@app.route("/api/chart/<mid>/image")
+def api_chart_image(mid):
+    """Generate and download a titled PNG using all collected points for one match."""
+    if not _MATCH_ID_PATTERN.fullmatch(str(mid or "")):
+        return jsonify({"error": "invalid_match_id", "detail": "比赛 ID 格式无效"}), 400
+    try:
+        image, filename = render_support_rate_png(mid)
+    except FileNotFoundError as exc:
+        return jsonify({"error": "support_rate_not_found", "detail": str(exc)}), 404
+    except Exception as exc:
+        app.logger.exception("生成支持率图片失败: mid=%s", mid)
+        return jsonify({
+            "error": "support_rate_render_failed",
+            "detail": f"支持率图片生成失败：{exc}",
+        }), 500
+
+    ascii_filename = f"support-rate-{mid}.png"
+    response = Response(image, status=200, mimetype="image/png")
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="{ascii_filename}"; '
+        f"filename*=UTF-8''{quote(filename)}"
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 if __name__ == "__main__":
